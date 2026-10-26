@@ -1,0 +1,330 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  ADMIN
+  SECURITY_ANALYST
+  API_CONSUMER
+  AUDITOR
+}
+
+enum HttpMethod {
+  GET
+  POST
+  PUT
+  DELETE
+  PATCH
+  OPTIONS
+  HEAD
+}
+
+enum PolicyType {
+  SQLI_PROTECTION
+  XSS_PROTECTION
+  RATE_LIMITING
+  HMAC_INTEGRITY
+  PAYLOAD_VALIDATION
+  PATH_TRAVERSAL
+}
+
+enum SeverityLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum PolicyAction {
+  LOG_ONLY
+  THROTTLE
+  BLOCK
+  QUARANTINE_IP
+}
+
+enum ThreatType {
+  SQL_INJECTION
+  XSS
+  PATH_TRAVERSAL
+  RATE_LIMIT_EXCEEDED
+  HMAC_VERIFICATION_FAILED
+  MALFORMED_PAYLOAD
+  UNAUTHORIZED_ACCESS
+}
+
+enum IncidentStatus {
+  DETECTED
+  INVESTIGATING
+  MITIGATED
+  RESOLVED
+  FALSE_POSITIVE
+}
+
+enum ActionType {
+  IP_BLOCK
+  IP_THROTTLE
+  KEY_REVOCATION
+  NOTIFICATION_SENT
+  MANUAL_OVERRIDE
+}
+
+enum ActionStatus {
+  PENDING
+  APPLIED
+  EXPIRED
+  REVOKED
+  FAILED
+}
+
+// 1. User
+model User {
+  id               String       @id @default(uuid())
+  email            String       @unique
+  passwordHash     String
+  fullName         String
+  role             Role         @default(SECURITY_ANALYST)
+  isActive         Boolean      @default(true)
+  lastLoginAt      DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  sessions         Session[]
+  auditLogs        AuditLog[]
+  assignedIncidents Incident[]
+
+  @@index([email])
+  @@index([role])
+}
+
+// 2. Session
+model Session {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  ipAddress  String?
+  userAgent  String?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@index([expiresAt])
+}
+
+// 3. ApiService
+model ApiService {
+  id             String           @id @default(uuid())
+  name           String           @unique
+  slug           String           @unique
+  description    String?
+  baseUrl        String
+  isActive       Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  endpoints      ApiEndpoint[]
+  policies       SecurityPolicy[]
+  requestLogs    ApiRequestLog[]
+  securityEvents SecurityEvent[]
+  incidents      Incident[]
+
+  @@index([slug])
+  @@index([isActive])
+}
+
+// 4. ApiEndpoint
+model ApiEndpoint {
+  id                   String          @id @default(uuid())
+  serviceId            String
+  service              ApiService      @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  path                 String
+  method               HttpMethod      @default(GET)
+  description          String?
+  requireHmac          Boolean         @default(false)
+  requireAuth          Boolean         @default(true)
+  rateLimitWindowSec   Int             @default(60)
+  rateLimitMaxRequests Int             @default(100)
+  isActive             Boolean         @default(true)
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  requestLogs          ApiRequestLog[]
+  securityEvents       SecurityEvent[]
+
+  @@unique([serviceId, method, path])
+  @@index([serviceId])
+  @@index([path])
+}
+
+// 5. SecurityPolicy
+model SecurityPolicy {
+  id          String          @id @default(uuid())
+  serviceId   String?
+  service     ApiService?     @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  policyType  PolicyType
+  severity    SeverityLevel   @default(MEDIUM)
+  ruleConfig  Json
+  isEnabled   Boolean         @default(true)
+  action      PolicyAction    @default(BLOCK)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  securityEvents SecurityEvent[]
+
+  @@index([serviceId])
+  @@index([policyType])
+  @@index([isEnabled])
+}
+
+// 6. ApiRequestLog
+model ApiRequestLog {
+  id             String          @id @default(uuid())
+  serviceId      String?
+  service        ApiService?     @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  endpointId     String?
+  endpoint       ApiEndpoint?    @relation(fields: [endpointId], references: [id], onDelete: SetNull)
+  requestId      String          @unique
+  clientIp       String
+  method         String
+  path           String
+  statusCode     Int
+  responseTimeMs Int
+  requestSize    Int?
+  responseSize   Int?
+  hasAuthHeader  Boolean         @default(false)
+  authKeyPrefix  String?
+  userAgent      String?
+  timestamp      DateTime        @default(now())
+
+  securityEvents  SecurityEvent[]
+  integrityRecord IntegrityRecord?
+
+  @@index([clientIp])
+  @@index([timestamp])
+  @@index([statusCode])
+  @@index([serviceId])
+}
+
+// 7. SecurityEvent
+model SecurityEvent {
+  id           String         @id @default(uuid())
+  requestLogId String?
+  requestLog   ApiRequestLog? @relation(fields: [requestLogId], references: [id], onDelete: SetNull)
+  serviceId    String?
+  service      ApiService?    @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  endpointId   String?
+  endpoint     ApiEndpoint?   @relation(fields: [endpointId], references: [id], onDelete: SetNull)
+  policyId     String?
+  policy       SecurityPolicy? @relation(fields: [policyId], references: [id], onDelete: SetNull)
+  incidentId   String?
+  incident     Incident?      @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  threatType   ThreatType
+  severity     SeverityLevel  @default(MEDIUM)
+  details      Json
+  actionTaken  String
+  clientIp     String
+  createdAt    DateTime       @default(now())
+
+  @@index([threatType])
+  @@index([severity])
+  @@index([clientIp])
+  @@index([createdAt])
+  @@index([incidentId])
+}
+
+// 8. Incident
+model Incident {
+  id               String          @id @default(uuid())
+  serviceId        String?
+  service          ApiService?     @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  title            String
+  description      String?
+  severity         SeverityLevel   @default(MEDIUM)
+  status           IncidentStatus  @default(DETECTED)
+  sourceIp         String?
+  assignedToUserId String?
+  assignedTo       User?           @relation(fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  detectedAt       DateTime        @default(now())
+  resolvedAt       DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  events          SecurityEvent[]
+  responseActions ResponseAction[]
+
+  @@index([status])
+  @@index([severity])
+  @@index([sourceIp])
+  @@index([detectedAt])
+}
+
+// 9. ResponseAction
+model ResponseAction {
+  id          String        @id @default(uuid())
+  incidentId  String?
+  incident    Incident?     @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  actionType  ActionType
+  target      String
+  status      ActionStatus  @default(PENDING)
+  reason      String
+  expiresAt   DateTime?
+  appliedAt   DateTime      @default(now())
+  revokedAt   DateTime?
+  revokedBy   String?
+
+  @@index([actionType])
+  @@index([target])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+// 10. IntegrityRecord
+model IntegrityRecord {
+  id                  String         @id @default(uuid())
+  requestLogId        String?        @unique
+  requestLog          ApiRequestLog? @relation(fields: [requestLogId], references: [id], onDelete: Cascade)
+  resourceType        String?
+  resourceId          String?
+  algorithm           String         @default("HMAC-SHA256")
+  keyId               String
+  signatureProvided   String?
+  signatureCalculated String
+  isValid             Boolean        @default(true)
+  requestTimestamp    DateTime       @default(now())
+  timeDriftMs         Int            @default(0)
+  verifiedAt          DateTime       @default(now())
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  @@index([resourceType, resourceId])
+  @@index([keyId])
+  @@index([isValid])
+  @@index([verifiedAt])
+}
+
+// 11. AuditLog
+model AuditLog {
+  id         String    @id @default(uuid())
+  userId     String?
+  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String
+  entityId   String?
+  clientIp   String?
+  userAgent  String?
+  details    Json?
+  timestamp  DateTime  @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([entityType])
+  @@index([timestamp])
+}

@@ -1,0 +1,25 @@
+name: nexacart
+
+services:
+  nexacart-postgres:
+    image: postgres:17-alpine
+    container_name: nexacart-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nexacart_db}
+      POSTGRES_USER: ${POSTGRES_USER:-nexacart_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexacart_dev_pass}
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - nexacart_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nexacart_user} -d ${POSTGRES_DB:-nexacart_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  nexacart_postgres_data:
+    name: nexacart_postgres_data
